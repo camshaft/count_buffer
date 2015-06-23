@@ -1,7 +1,7 @@
 defmodule CountBuffer do
-  def start(name, size, flush) do
+  def start(name, size, flush, num_workers \\ 3) do
     PoolRing.start(name, size, fn(_, _) ->
-      GenServer.start_link(__MODULE__, [flush], [])
+      {:ok, spawn_link(__MODULE__, :init, [flush, num_workers])}
     end)
   end
 
@@ -15,41 +15,45 @@ defmodule CountBuffer do
     end
   end
 
-  def init([flush]) do
-    :erlang.send_after(500, self(), :flush)
+  def init(flush, num_workers \\ 3) do
     :erlang.process_flag(:trap_exit, true)
-    {:ok, {flush, %{}}}
-  end
-
-  def handle_call(_, _, state) do
-    {:reply, :ok, state}
-  end
-
-  def handle_cast(_, state) do
-    {:noreply, state}
-  end
-
-  def handle_info(:flush, {flush, counts}) do
-    parent = self()
-    spawn(fn ->
-      Enum.each(counts, fn({{bucket, key}, count}) ->
-        try do
-          flush.(bucket, key, count)
-        rescue
-          _ ->
-            send(parent, {bucket, key, count})
-        end
-      end)
+    workers = :lists.seq(1, num_workers)
+    |> Enum.map(fn(_) ->
+      spawn_link(CountBuffer.Worker, :init, [flush])
     end)
-    :erlang.send_after(500, self(), :flush)
-    {:noreply, {flush, %{}}}
+    loop(workers, nil)
   end
-  def handle_info({bucket, key, count}, {flush, counts}) when is_integer(count) do
-    val = :maps.get({bucket, key}, counts, 0)
-    counts = :maps.put({bucket, key}, val + count, counts)
-    {:noreply, {flush, counts}}
+
+  def loop(workers, timer) do
+    receive do
+      :flush ->
+        flush(workers)
+        __MODULE__.loop(workers, nil)
+      {bucket, key, count} when is_integer(count) ->
+        k = {bucket, key}
+        val = Process.get(k, 0)
+        Process.put(k, val + count)
+
+        timer = if timer do
+          timer
+        else
+          :erlang.send_after(500, self(), :flush)
+        end
+
+        __MODULE__.loop(workers, timer)
+    end
   end
-  def handle_info(_info, state) do
-    {:noreply, state}
+
+  defp flush(workers) do
+    :erlang.erase()
+    |> Enum.each(fn({{bucket, key} = k, count}) ->
+      hash(workers, k)
+      |> send({bucket, key, count})
+    end)
+  end
+
+  defp hash(workers, key) do
+    i = rem(:erlang.phash2(key), length(workers))
+    :lists.nth(i + 1, workers)
   end
 end
