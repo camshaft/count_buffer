@@ -29,7 +29,7 @@ defmodule CountBuffer do
       :flush ->
         flush(workers)
         __MODULE__.loop(workers, nil)
-      {bucket, key, count} when is_integer(count) ->
+      {bucket, key, count} when is_integer(count) or is_float(count) ->
         k = {bucket, key}
         val = Process.get(k, 0)
         Process.put(k, val + count)
@@ -40,6 +40,8 @@ defmodule CountBuffer do
           :erlang.send_after(500, self(), :flush)
         end
 
+        __MODULE__.loop(workers, timer)
+      _other ->
         __MODULE__.loop(workers, timer)
     end
   end
