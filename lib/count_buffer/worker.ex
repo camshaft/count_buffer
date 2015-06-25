@@ -1,4 +1,6 @@
 defmodule CountBuffer.Worker do
+  require Logger
+
   def init(flush) do
     loop(flush)
   end
@@ -11,6 +13,9 @@ defmodule CountBuffer.Worker do
           flush.(bucket, key, count)
         rescue
           _ ->
+            Logger.error("error while saving count", [bucket: bucket,
+                                                      key: key,
+                                                      count: count])
             send(self(), {bucket, key, count})
         end
         __MODULE__.loop(flush)
