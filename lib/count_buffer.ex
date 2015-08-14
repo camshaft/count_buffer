@@ -34,11 +34,18 @@ defmodule CountBuffer do
         val = Process.get(k, 0)
         Process.put(k, val + count)
 
-        timer = if timer do
-          timer
-        else
-          :erlang.send_after(500, self(), :flush)
-        end
+        timer = schedule_flush(timer)
+
+        __MODULE__.loop(workers, timer)
+      {bucket, key, counts} when is_map(counts) ->
+        k = {bucket, key, :map}
+        val = counts
+        |> Enum.reduce(Process.get(k, %{}), fn({key, value}, acc) ->
+          Map.update(acc, key, value, &(&1 + value))
+        end)
+        Process.put(k, val)
+
+        timer = schedule_flush(timer)
 
         __MODULE__.loop(workers, timer)
       _other ->
@@ -46,11 +53,19 @@ defmodule CountBuffer do
     end
   end
 
+  defp schedule_flush(timer) do
+    timer || :erlang.send_after(500, self(), :flush)
+  end
+
   defp flush(workers) do
     :erlang.erase()
-    |> Enum.each(fn({{bucket, key} = k, count}) ->
-      hash(workers, k)
-      |> send({bucket, key, count})
+    |> Enum.each(fn
+      ({{bucket, key} = k, count}) ->
+        hash(workers, k)
+        |> send({bucket, key, count})
+      ({{bucket, key, :map}, count}) ->
+        hash(workers, {bucket, key})
+        |> send({bucket, key, count})
     end)
   end
 
