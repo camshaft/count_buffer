@@ -19,12 +19,11 @@ defmodule CountBuffer.Worker do
         count = gather(bucket, key, count)
         try do
           flush.(bucket, key, count)
-        rescue
-          _ ->
-            Logger.error("error while saving count", [bucket: bucket,
-                                                      key: key,
-                                                      count: count])
-            send(self(), {bucket, key, count})
+        catch
+          type, error ->
+            ex = Exception.format(type, error, System.stacktrace())
+            Logger.error("error while saving count: #{bucket}/#{key} +#{count}\n#{ex}")
+            :erlang.send_after(5_000, self(), {bucket, key, count})
         end
         __MODULE__.loop(flush)
     end
